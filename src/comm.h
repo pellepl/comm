@@ -1,0 +1,279 @@
+/*
+ * comm.h
+ *
+ *  Created on: Jun 8, 2012
+ *      Author: petera
+ */
+
+#ifndef COMM_H_
+#define COMM_H_
+
+#include "comm_config.h"
+/* errors */
+
+#define R_COMM_OK               0
+
+#define R_COMM_PHY_FAIL         -1
+#define R_COMM_PHY_TMO          -2
+
+#define R_COMM_LNK_PRE_FAIL     -3
+#define R_COMM_LNK_CRC_FAIL     -4
+
+#define R_COMM_NWK_NOT_ME       -5
+#define R_COMM_NWK_TO_SELF      -6
+#define R_COMM_NWK_BAD_ADDR     -7
+
+#define R_COMM_TRA_PEND_Q_FULL  -8
+#define R_COMM_TRA_ACK_Q_FULL   -9
+#define R_COMM_TRA_NO_ACK       -10
+#define R_COMM_TRA_CANNOT_ACK_BROADCAST -11
+
+#define R_COMM_APP_NOT_AN_ACK   -12
+
+/* protocol defines */
+
+#define COMM_LNK_MAX_DATA       256
+#define COMM_APP_MAX_DATA       (COMM_LNK_MAX_DATA-1-2)
+
+#define COMM_NWK_BRDCAST        ((comm_addr)0x0)
+
+#define COMM_NO_SEQNO           (0xffff)
+
+#if COMM_USER_DIFFERENTIATION
+#define COMM_TRA_MAX_USERS       (COMM_MAX_USERS+1-2) /*do not include self and broadcast */
+#else
+#define COMM_TRA_MAX_USERS       1
+#endif
+
+#define COMM_TRA_INF_PING        0x01
+#define COMM_TRA_INF_CONGESTION  0x02
+#define COMM_TRA_INF_PONG        0x81
+
+// bits set by txer/rxer
+#define COMM_FLAG_REQACK_BIT     (1<<0)  /* indicates that ack is requested */
+#define COMM_FLAG_ISACK_BIT      (1<<1)  /* indicates that this is an ack */
+#define COMM_FLAG_INF_BIT        (1<<2)  /* indicates an info packet */
+#define COMM_FLAG_RESENT_BIT     (1<<3)  /* indicates a resent packet */
+// status flags set in transport layer
+#define COMM_STAT_RESEND_BIT     (1<<4)  /* indicates a packet whose ack is already registered - ie packet is resent */
+#define COMM_STAT_ACK_MISS_BIT   (1<<5)  /* indicates an ack for an already acked packet or a packet not wanting ack */
+// status flags set in app layer
+#define COMM_STAT_REPLY_BIT      (1<<6)  /* indicates that this message will be acked on app level */
+
+/* header sizes */
+
+#define COMM_H_SIZE_LNK         0
+#define COMM_H_SIZE_NWK         1
+#define COMM_H_SIZE_TRA         2
+
+#define COMM_H_SIZE (COMM_H_SIZE_LNK+COMM_H_SIZE_NWK+COMM_H_SIZE_TRA)
+
+/* types */
+
+typedef unsigned char comm_addr;
+
+/*
+  rx/tx structure
+ */
+typedef struct {
+  unsigned char *data;
+  unsigned short len;
+  comm_addr src;
+  comm_addr dst;
+  unsigned char flags;
+  unsigned short seqno;
+  comm_time timestamp;
+} comm_arg;
+
+
+/* layer func types */
+
+typedef struct comm comm;
+
+typedef int (*comm_phy_tx_char_fn)(unsigned char c);
+typedef int (*comm_phy_tx_buf_fn)(unsigned char *c, unsigned short len);
+typedef int (*comm_phy_rx_char_fn)(unsigned char *c);
+
+typedef int (*comm_phy_lnk_rx_fn)(comm *comm, unsigned char c);
+typedef void (*comm_lnk_phy_err_fn)(comm *comm, int err);
+
+typedef int (*comm_tx_fn)(comm *comm, comm_arg *tx);
+typedef int (*comm_rx_fn)(comm *comm, comm_arg *rx);
+
+typedef void (*comm_tra_app_ack_fn)(comm *comm, comm_arg *rx);
+
+/* user / application func types */
+
+typedef comm_time (*comm_app_get_time_fn)(void);
+/* invoked on transport info */
+typedef void (*comm_tra_app_inf_fn)(comm *comm, comm_arg *rx);
+/* received stuff from rx->src, in here one might to call comm_app_reply  */
+typedef int (*comm_app_user_rx_fn)(comm *comm, comm_arg *rx,  unsigned short len, unsigned char *data);
+/* received an ack */
+typedef void (*comm_app_user_ack_fn)(comm *comm, comm_arg *rx, unsigned short seqno, unsigned short len, unsigned char *data);
+/* invoked on error */
+typedef void (*comm_app_user_err_fn)(comm *comm, int err, unsigned short seqno, unsigned short len, unsigned char *data);
+/* invoked on transport info */
+typedef void (*comm_app_user_inf_fn)(comm *comm, comm_arg *rx);
+#if COMM_LNK_ALLOCATE_RX_BUFFER
+typedef void (*comm_lnk_alloc_rx_fn)(comm *comm, void **data, void **arg, unsigned int data_len, unsigned int arg_len);
+typedef void (*comm_lnk_free_rx_fn)(comm *comm, void *data, void *arg);
+#endif
+
+/* PHY, primitive timeout and pipe error handling
+ */
+typedef struct {
+  comm_phy_rx_char_fn rx;
+  comm_phy_lnk_rx_fn up_rx_f;
+  unsigned int conseq_tmo;
+  unsigned int max_conseq_tmo;
+  char last_was_tmo;
+} comm_phy;
+
+/* LINK - frames of 1 to 256 bytes of data, frame and crc check
+   [5a] [len] [..] [CRChi] [CRClo]
+ */
+
+typedef struct {
+  unsigned char state;
+  unsigned short len;
+  unsigned short ix;
+#if COMM_LNK_DOUBLE_RX_BUFFER
+  unsigned char _buf1[COMM_LNK_MAX_DATA];
+  unsigned char _buf2[COMM_LNK_MAX_DATA];
+  comm_arg _rx_arg1;
+  comm_arg _rx_arg2;
+#elif COMM_LNK_ALLOCATE_RX_BUFFER
+  comm_lnk_alloc_rx_fn alloc_f;
+  comm_lnk_free_rx_fn free_f;
+#else
+  unsigned char _buf[COMM_LNK_MAX_DATA];
+  comm_arg _rx_arg;
+#endif
+  unsigned char *buf;
+  unsigned short r_crc;
+  unsigned short l_crc;
+  comm_arg *rx_arg;
+  comm_rx_fn up_rx_f;
+  comm_phy_tx_char_fn phy_tx_f;
+  comm_phy_tx_buf_fn phy_tx_buf_f;
+  comm_lnk_phy_err_fn phy_err_f;
+} comm_lnk;
+
+
+/* NETWORK - allows for point to point or broadcast communication
+   255 bytes of payload
+   [src7:4 | dst3:0] [..]
+*/
+
+typedef struct {
+  comm_addr addr;
+  comm_rx_fn up_rx_f;
+  comm_tx_fn down_tx_f;
+} comm_nwk;
+
+/* TRANSPORT - ack with/without piggyback function, packet sequencing (but does not provide order), retransmission scheme
+   [seqno_hi] [seqno_lo7:4 | flags3:0] [..]
+   253 bytes of payload
+*/
+
+struct comm_tra_pkt {
+  unsigned char busy;
+  comm_time timestamp;
+  unsigned char resends;
+  unsigned char data[COMM_LNK_MAX_DATA];
+  comm_arg arg;
+};
+
+typedef struct {
+  comm_rx_fn up_rx_f;
+  comm_tx_fn down_tx_f;
+
+  unsigned short seqno[COMM_TRA_MAX_USERS];
+  unsigned short acks_rx_pend[COMM_TRA_MAX_USERS][COMM_MAX_PENDING];
+  struct comm_tra_pkt acks_tx_pend[COMM_MAX_PENDING];
+} comm_tra;
+
+/* APPLICATION
+ */
+
+typedef struct {
+  comm_app_user_rx_fn user_up_rx_f;
+  comm_app_user_ack_fn user_ack_f;
+  comm_app_user_err_fn user_err_f;
+  comm_app_user_inf_fn user_inf_f;
+  comm_app_get_time_fn get_time_f;
+  comm_tra_app_ack_fn ack_f;
+  comm_tra_app_inf_fn inf_f;
+  comm_tx_fn app_tx_f;
+} comm_app;
+
+/* DEVICE
+ */
+struct comm {
+  comm_phy phy;
+  comm_lnk lnk;
+  comm_nwk nwk;
+  comm_tra tra;
+  comm_app app;
+};
+
+
+/* layer funcs */
+
+void comm_app_init(comm *comm, comm_app_user_rx_fn up_rx_f, comm_app_user_ack_fn ack_f, comm_tx_fn app_tx_f,
+    comm_app_get_time_fn get_time_f, comm_app_user_err_fn err_f, comm_app_user_inf_fn inf_f);
+int comm_app_rx(comm *comm, comm_arg* rx);
+int comm_app_tx(comm *comm, comm_arg* tx);
+void comm_app_ack(comm *comm, comm_arg *rx);
+
+void comm_tra_init(comm *comm, comm_rx_fn up_rx_f, comm_tx_fn nwk_tx_f);
+int comm_tra_rx(comm *comm, comm_arg* rx);
+int comm_tra_tx(comm *comm, comm_arg* tx);
+void comm_tra_tick(comm *comm, comm_time time);
+
+void comm_nwk_init(comm *comm, comm_addr addr, comm_rx_fn up_rx_f, comm_tx_fn lnk_tx_f);
+int comm_nwk_rx(comm *comm, comm_arg* rx);
+int comm_nwk_tx(comm *comm, comm_arg* tx);
+
+void comm_link_init(comm *comm, comm_rx_fn up_rx_f, comm_phy_tx_char_fn phy_tx_f, comm_phy_tx_buf_fn phy_tx_buf_f);
+int comm_link_rx(comm *comm, unsigned char c);
+int comm_link_tx(comm *comm, comm_arg* tx);
+void comm_lnk_phy_err(comm *comm, int err);
+
+void comm_phy_init(comm *comm, comm_phy_rx_char_fn rx);
+
+/* api funcs */
+
+/* Note - these functions are not thread safe. comm_tick, comm_tx or comm_phy_receive
+   should not run simultaneously
+ */
+
+/* initialize the comm stack */
+void comm_init(comm *comm, comm_addr this_addr, comm_phy_rx_char_fn rx, comm_phy_tx_char_fn tx,
+               comm_phy_tx_buf_fn tx_buf, comm_app_get_time_fn get_time,
+               comm_app_user_rx_fn user_rx, comm_app_user_ack_fn user_ack, comm_app_user_err_fn user_err,
+               comm_app_user_inf_fn user_inf);
+#if COMM_LNK_ALLOCATE_RX_BUFFER
+/* If COMM_LNK_ALLOCATE_RX_BUFFER configuration is on, comm_init_alloc must be called
+   directly after comm_init and before comm stack is used.
+ */
+void comm_init_alloc(comm *comm, comm_lnk_alloc_rx_fn alloc_f, comm_lnk_free_rx_fn free_f);
+#endif
+/* Calls comm_phy_rx_char_fn given in init and propagates it thru stack.
+ */
+int comm_phy_receive(comm* comm);
+/* Call this in a system tick func to dispatch acks and resend unacked stuff.
+ */
+void comm_tick(comm *comm, comm_time time);
+/* Sends stuff to dst, returns negative for err or seqno.
+ */
+int comm_tx(comm *comm, comm_addr dst, unsigned int len, unsigned char *data, int app_ack);
+/* Directly returns answer to a received pkt as piggyback on ack. This must
+   be invoked within the stack call to comm_app_user_rx_fn user_rx given in init.
+ */
+int comm_reply(comm *comm, comm_arg* rx, unsigned short len, unsigned char *data);
+
+int comm_ping(comm *comm, int dst);
+
+#endif /* COMM_H_ */
