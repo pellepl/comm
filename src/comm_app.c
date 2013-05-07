@@ -7,8 +7,15 @@
 
 #include "comm.h"
 
-void comm_app_init(comm *comm, comm_app_user_rx_fn up_rx_f, comm_app_user_ack_fn ack_f, comm_tx_fn app_tx_f, comm_app_get_time_fn get_time_f, comm_app_user_err_fn err_f,
-                   comm_app_user_inf_fn inf_f) {
+void comm_app_init(
+    comm *comm,
+    comm_app_user_rx_fn up_rx_f,
+    comm_app_user_ack_fn ack_f,
+    comm_tx_fn app_tx_f,
+    comm_app_get_time_fn get_time_f,
+    comm_app_user_err_fn err_f,
+    comm_app_user_inf_fn inf_f,
+    comm_app_user_alert_fn alert_f) {
   comm->app.app_tx_f = app_tx_f;
   comm->app.user_ack_f = ack_f;
   comm->app.user_up_rx_f = up_rx_f;
@@ -16,6 +23,7 @@ void comm_app_init(comm *comm, comm_app_user_rx_fn up_rx_f, comm_app_user_ack_fn
   comm->app.get_time_f = get_time_f;
   comm->app.ack_f = comm_app_ack;
   comm->app.inf_f = inf_f;
+  comm->app.alert_f = alert_f;
 }
 
 int comm_app_rx(comm *comm, comm_arg *rx) {

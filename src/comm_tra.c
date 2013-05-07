@@ -20,41 +20,39 @@ static void comm_tra_tx_resend(comm *comm, comm_time time) {
   // check txed packets wanting acks and resend on timeout
   int i;
   for (i = 0; i < COMM_MAX_PENDING; i++) {
-    if (comm->tra.acks_tx_pend[i].busy &&
-        (time - comm->tra.acks_tx_pend[i].timestamp) >= COMM_RESEND_TICK) {
-      if (comm->tra.acks_tx_pend[i].resends >= COMM_MAX_RESENDS) {
+    struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
+    if (pending->busy &&
+        (time - pending->timestamp) >= COMM_RESEND_TICK) {
+      if (pending->resends >= COMM_MAX_RESENDS) {
         // reached limit, waste packet
-        COMM_TRA_DBG("pkt wasted %03x, tries %i", comm->tra.acks_tx_pend[i].arg.seqno, comm->tra.acks_tx_pend[i].resends);
-        comm->tra.acks_tx_pend[i].busy = 0;
-        comm->app.user_err_f(comm, R_COMM_TRA_NO_ACK, comm->tra.acks_tx_pend[i].arg.seqno,
-            comm->tra.acks_tx_pend[i].arg.len, comm->tra.acks_tx_pend[i].arg.data);
+        COMM_TRA_DBG("pkt wasted %03x, tries %i", pending->arg.seqno, pending->resends);
+        pending->busy = 0;
+        comm->app.user_err_f(comm, R_COMM_TRA_NO_ACK, pending->arg.seqno, pending->arg.len, pending->arg.data);
         continue;
       } else {
         // resend
-        comm->tra.acks_tx_pend[i].resends++;
-        comm->tra.acks_tx_pend[i].timestamp = time;
-        COMM_TRA_DBG("resending %03x try %i", comm->tra.acks_tx_pend[i].arg.seqno, comm->tra.acks_tx_pend[i].resends);
+        pending->resends++;
+        pending->timestamp = time;
+        COMM_TRA_DBG("resending %03x try %i", pending->arg.seqno, pending->resends);
 
-        unsigned short t_len = comm->tra.acks_tx_pend[i].arg.len;
-        unsigned char *t_data = comm->tra.acks_tx_pend[i].arg.data;
-        int res = comm->tra.down_tx_f(comm, &comm->tra.acks_tx_pend[i].arg);
+        unsigned short t_len = pending->arg.len;
+        unsigned char *t_data = pending->arg.data;
+        int res = comm->tra.down_tx_f(comm, &pending->arg);
         // reset length and data ptr
-        comm->tra.acks_tx_pend[i].arg.len = t_len;
-        comm->tra.acks_tx_pend[i].arg.data = t_data;
+        pending->arg.len = t_len;
+        pending->arg.data = t_data;
 
         switch (res) {
         case R_COMM_OK:
           continue;
         case R_COMM_PHY_FAIL:
           // major error, report and bail out
-          comm->app.user_err_f(comm, res, comm->tra.acks_tx_pend[i].arg.seqno,
-              comm->tra.acks_tx_pend[i].arg.len, comm->tra.acks_tx_pend[i].arg.data);
+          comm->app.user_err_f(comm, res, pending->arg.seqno, comm->tra.acks_tx_pend[i].arg.len, pending->arg.data);
           return;
         default:
           // report and mark as free, app must take care of this
-          comm->tra.acks_tx_pend[i].busy = 0;
-          comm->app.user_err_f(comm, res, comm->tra.acks_tx_pend[i].arg.seqno,
-              comm->tra.acks_tx_pend[i].arg.len, comm->tra.acks_tx_pend[i].arg.data);
+          pending->busy = 0;
+          comm->app.user_err_f(comm, res, pending->arg.seqno, pending->arg.len, pending->arg.data);
           break;
         }
       }
@@ -125,18 +123,17 @@ static int comm_tra_register_tx_tobeacked(comm *comm, comm_arg* tx) {
   if (i == COMM_MAX_PENDING) {
     return R_COMM_TRA_PEND_Q_FULL;
   }
-  comm->tra.acks_tx_pend[i].busy = 1;
-  comm->tra.acks_tx_pend[i].timestamp = comm->app.get_time_f();
-  comm->tra.acks_tx_pend[i].resends = 0;
-  COMM_MEMCPY(&comm->tra.acks_tx_pend[i].arg, tx, sizeof(comm_arg));
-  COMM_MEMCPY(
-      &comm->tra.acks_tx_pend[i].data[COMM_H_SIZE - COMM_H_SIZE_TRA],
-      tx->data, tx->len);
-  comm->tra.acks_tx_pend[i].arg.data =
-      &comm->tra.acks_tx_pend[i].data[COMM_H_SIZE - COMM_H_SIZE_TRA];
+  struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
+
+  pending->busy = 1;
+  pending->timestamp = comm->app.get_time_f();
+  pending->resends = 0;
+  COMM_MEMCPY(&pending->arg, tx, sizeof(comm_arg));
+  COMM_MEMCPY(&pending->data[COMM_H_SIZE - COMM_H_SIZE_TRA], tx->data, tx->len);
+  pending->arg.data = &pending->data[COMM_H_SIZE - COMM_H_SIZE_TRA];
   unsigned short xtra_h = COMM_FLAG_RESENT_BIT;
-  comm->tra.acks_tx_pend[i].arg.data[0] |= (xtra_h & 0xff00) >> 8;
-  comm->tra.acks_tx_pend[i].arg.data[1] |= (xtra_h & 0x00ff);
+  pending->arg.data[0] |= (xtra_h & 0xff00) >> 8;
+  pending->arg.data[1] |= (xtra_h & 0x00ff);
 
   return R_COMM_OK;
 }
@@ -145,10 +142,10 @@ static int comm_tra_got_rx_ack(comm *comm, comm_arg *rx) {
 
   int i;
   for (i = 0; i < COMM_MAX_PENDING; i++) {
-    if (comm->tra.acks_tx_pend[i].busy &&
-        comm->tra.acks_tx_pend[i].arg.seqno == rx->seqno &&
-        (comm->tra.acks_tx_pend[i].arg.dst == rx->src || !COMM_USER_DIFFERENTIATION)) {
-      comm->tra.acks_tx_pend[i].busy = 0;
+    struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
+    if (pending->busy && pending->arg.seqno == rx->seqno &&
+        (pending->arg.dst == rx->src || !COMM_USER_DIFFERENTIATION)) {
+      pending->busy = 0;
       return R_COMM_OK;
     }
   }
@@ -225,14 +222,14 @@ static int comm_tra_handle_rx(comm *comm, comm_arg* rx) {
     COMM_TRA_DBG("info pkt");
     res = comm_tra_handle_remote_inf(comm, rx);
   } else if (rx->flags & COMM_FLAG_REQACK_BIT) {
-    // this packet wants to be acked
+    // got remote packet, and packet wants to be acked
     COMM_TRA_DBG("rx pkt wants ack");
     res = comm_tra_register_rx_reqack_pending(comm, rx, &ack_entry);
     if (res == R_COMM_TRA_ACK_Q_FULL) {
       (void)comm_tra_send_inf(comm, rx->src, COMM_TRA_INF_CONGESTION);
     }
   } else if (rx->flags & COMM_FLAG_ISACK_BIT) {
-    // this is an ack
+    // got ack for local packet
     COMM_TRA_DBG("rx pkt is ack");
     res = comm_tra_got_rx_ack(comm, rx);
     if (res == R_COMM_OK) {
@@ -242,21 +239,22 @@ static int comm_tra_handle_rx(comm *comm, comm_arg* rx) {
     }
   }
   if (res == R_COMM_OK && rx->len > 0) {
-    // only send up to app if all ok and len is ok
+    // only send up to app if all ok and len is ok, acks and infs already reported
     if ((rx->flags & (COMM_FLAG_ISACK_BIT | COMM_FLAG_INF_BIT)) == 0) {
-      // acks already reported
       res = comm->tra.up_rx_f(comm, rx);
       // now, see if app wants to/has sent ack itself
       if (res == R_COMM_OK &&
           (rx->flags & COMM_STAT_REPLY_BIT) &&
           (rx->flags & COMM_FLAG_ISACK_BIT)) {
         COMM_TRA_DBG("pkt is acked by APP");
+        // clear ack slot
         *ack_entry = COMM_TRA_FREE_ACK_SLOT;
       }
 #if COMM_ACK_DIRECTLY
       if (res == R_COMM_OK &&
           (rx->flags & COMM_STAT_REPLY_BIT) == 0 &&
           (rx->flags & COMM_FLAG_REQACK_BIT)) {
+        // send empty ack directly from rx callback
         comm_tra_tx_pending_acks(comm);
       }
 #endif
@@ -280,17 +278,21 @@ int comm_tra_rx(comm *comm, comm_arg* rx) {
 }
 
 static int comm_tra_tx_seqno(comm *comm, comm_arg* tx, unsigned short seqno) {
-  tx->seqno = seqno;
-  unsigned short tra_h = (seqno << 4) | ((tx->flags) &  ~(COMM_TRA_SEQNO_MASK));
-  tx->data -= COMM_H_SIZE_TRA;
-  tx->len += COMM_H_SIZE_TRA;
-  tx->data[0] = (tra_h & 0xff00) >> 8;
-  tx->data[1] = (tra_h & 0x00ff);
-  if (tx->flags & COMM_FLAG_REQACK_BIT) {
-    // this is to be acked, save for resend
-    int res = comm_tra_register_tx_tobeacked(comm, tx);
-    if (res != R_COMM_OK) {
-      return res;
+  if (tx->flags & COMM_STAT_ALERT_BIT) {
+    tx->seqno = 0;
+  } else {
+    tx->seqno = seqno;
+    unsigned short tra_h = (seqno << 4) | ((tx->flags) &  ~(COMM_TRA_SEQNO_MASK));
+    tx->data -= COMM_H_SIZE_TRA;
+    tx->len += COMM_H_SIZE_TRA;
+    tx->data[0] = (tra_h & 0xff00) >> 8;
+    tx->data[1] = (tra_h & 0x00ff);
+    if (tx->flags & COMM_FLAG_REQACK_BIT) {
+      // this is to be acked, save for resend
+      int res = comm_tra_register_tx_tobeacked(comm, tx);
+      if (res != R_COMM_OK) {
+        return res;
+      }
     }
   }
   return comm->tra.down_tx_f(comm, tx);
@@ -300,6 +302,9 @@ int comm_tra_tx(comm *comm, comm_arg* tx) {
   unsigned short seqno;
   if (COMM_USER_DIFFERENTIATION && tx->dst == COMM_NWK_BRDCAST && (tx->flags & COMM_FLAG_REQACK_BIT)) {
     return R_COMM_TRA_CANNOT_ACK_BROADCAST;
+  }
+  if (tx->flags & COMM_STAT_ALERT_BIT) {
+    return comm_tra_tx_seqno(comm, tx, 0);
   }
   if ((tx->flags & COMM_STAT_REPLY_BIT) == 0) {
     // plain send, take nbr from sequence index for this dst and increase

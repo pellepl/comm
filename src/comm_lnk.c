@@ -16,7 +16,7 @@
 
 #define COMM_CRC_INIT         0xffff
 
-static unsigned short crc_ccitt_16(unsigned short crc, unsigned char data) {
+static unsigned short _crc_ccitt_16(unsigned short crc, unsigned char data) {
   crc  = (unsigned char)(crc >> 8) | (crc << 8);
   crc ^= data;
   crc ^= (unsigned char)(crc & 0xff) >> 4;
@@ -46,7 +46,7 @@ int comm_link_rx(comm *comm, unsigned char c) {
   case COMM_LNK_STATE_DAT:
     //COMM_LNK_DBG("dat %02x @ %i", c, comm->lnk.ix);
     comm->lnk.buf[comm->lnk.ix++] = c;
-    comm->lnk.l_crc = crc_ccitt_16(comm->lnk.l_crc, c);
+    comm->lnk.l_crc = _crc_ccitt_16(comm->lnk.l_crc, c);
     if (comm->lnk.ix == comm->lnk.len) {
       comm->lnk.ix = 1;
       comm->lnk.state = COMM_LNK_STATE_CRC;
@@ -74,12 +74,15 @@ int comm_link_rx(comm *comm, unsigned char c) {
           comm->lnk.rx_arg = &comm->lnk._rx_arg1;
         }
 #elif COMM_LNK_ALLOCATE_RX_BUFFER
+        // allocate new fresh instances of link buffer data and link argument
+        // for next packet
         comm->lnk.alloc_f(comm,
             (void**)&comm->lnk.buf, (void**)&comm->lnk.rx_arg,
             COMM_LNK_MAX_DATA, sizeof(comm_arg));
 #endif
         int res = comm->lnk.up_rx_f(comm, rx_arg);
 #if COMM_LNK_ALLOCATE_RX_BUFFER
+        // remove previous allocations as it is now handled
         comm->lnk.free_f(comm, rx_arg->data, rx_arg);
 #endif
         return res;
@@ -102,7 +105,7 @@ int comm_link_tx(comm *comm, comm_arg* tx) {
   unsigned char *buf = tx->data;
 
   for (i = 0; i < len; i++) {
-    crc = crc_ccitt_16(crc, buf[i]);
+    crc = _crc_ccitt_16(crc, buf[i]);
   }
 
   res = comm->lnk.phy_tx_f(COMM_LNK_PREAMBLE);
@@ -132,6 +135,13 @@ int comm_link_tx(comm *comm, comm_arg* tx) {
   }
 
   res = comm->lnk.phy_tx_f(crc & 0xff);
+  if (res != R_COMM_OK) {
+    return res;
+  }
+
+  if (comm->lnk.phy_tx_flush_f) {
+    res = comm->lnk.phy_tx_flush_f(comm, tx);
+  }
   return res;
 }
 
@@ -143,15 +153,25 @@ void comm_lnk_phy_err(comm *comm, int err) {
 }
 
 void comm_init_alloc(comm *comm, comm_lnk_alloc_rx_fn alloc_f, comm_lnk_free_rx_fn free_f) {
+  // NB, the stack will first allocate a buffer which will be used to fill with packet data.
+  // When packet has been received successfully, a new buffer will be allocated for nextcoming packet
+  // and previous buffer will be sent up in stack. When stack returns to link layer, the previous
+  // buffer will be freed. The stack will this always have at least one buffer allocated while waiting
+  // for packet, and at least two buffers allocated while reporting a packet up to upper layers.
+  // Would the upper layers switch thread context or similar, more buffers could be simultaneously
+  // allocated.
   comm->lnk.alloc_f = alloc_f;
   comm->lnk.free_f = free_f;
+  // allocate first instance of link buffer and link arg
   alloc_f(comm, (void**)&comm->lnk.buf, (void**)&comm->lnk.rx_arg, COMM_LNK_MAX_DATA, sizeof(comm_arg));
 }
 
-void comm_link_init(comm *comm, comm_rx_fn up_rx_f, comm_phy_tx_char_fn phy_tx_f, comm_phy_tx_buf_fn phy_tx_buf_f) {
+void comm_link_init(comm *comm, comm_rx_fn up_rx_f, comm_phy_tx_char_fn phy_tx_f, comm_phy_tx_buf_fn phy_tx_buf_f,
+    comm_phy_tx_flush_fn phy_tx_flush_f) {
   comm->lnk.up_rx_f = up_rx_f;
   comm->lnk.phy_tx_f = phy_tx_f;
   comm->lnk.phy_tx_buf_f = phy_tx_buf_f;
+  comm->lnk.phy_tx_flush_f = phy_tx_flush_f;
   comm->lnk.state = COMM_LNK_STATE_PRE;
   comm->lnk.phy_err_f = comm_lnk_phy_err;
 #if COMM_LNK_DOUBLE_RX_BUFFER

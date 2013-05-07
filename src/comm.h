@@ -59,12 +59,15 @@
 #define COMM_STAT_ACK_MISS_BIT   (1<<5)  /* indicates an ack for an already acked packet or a packet not wanting ack */
 // status flags set in app layer
 #define COMM_STAT_REPLY_BIT      (1<<6)  /* indicates that this message will be acked on app level */
+#define COMM_STAT_ALERT_BIT      (1<<7)  /* indicates that this in an alert packet */
 
 /* header sizes */
 
 #define COMM_H_SIZE_LNK         0
 #define COMM_H_SIZE_NWK         1
 #define COMM_H_SIZE_TRA         2
+
+#define COMM_H_SIZE_ALERT       2
 
 #define COMM_H_SIZE (COMM_H_SIZE_LNK+COMM_H_SIZE_NWK+COMM_H_SIZE_TRA)
 
@@ -92,6 +95,8 @@ typedef struct comm comm;
 
 typedef int (*comm_phy_tx_char_fn)(unsigned char c);
 typedef int (*comm_phy_tx_buf_fn)(unsigned char *c, unsigned short len);
+typedef int (*comm_phy_tx_flush_fn)(comm *comm, comm_arg* tx);
+
 typedef int (*comm_phy_rx_char_fn)(unsigned char *c);
 
 typedef int (*comm_phy_lnk_rx_fn)(comm *comm, unsigned char c);
@@ -115,6 +120,8 @@ typedef void (*comm_app_user_ack_fn)(comm *comm, comm_arg *rx, unsigned short se
 typedef void (*comm_app_user_err_fn)(comm *comm, int err, unsigned short seqno, unsigned short len, unsigned char *data);
 /* invoked on transport info */
 typedef void (*comm_app_user_inf_fn)(comm *comm, comm_arg *rx);
+/* invoked on node alert packet */
+typedef void (*comm_app_user_alert_fn)(comm *comm, comm_addr node_address, unsigned char type, unsigned short len, unsigned char *data);
 #if COMM_LNK_ALLOCATE_RX_BUFFER
 typedef void (*comm_lnk_alloc_rx_fn)(comm *comm, void **data, void **arg, unsigned int data_len, unsigned int arg_len);
 typedef void (*comm_lnk_free_rx_fn)(comm *comm, void *data, void *arg);
@@ -157,6 +164,7 @@ typedef struct {
   comm_rx_fn up_rx_f;
   comm_phy_tx_char_fn phy_tx_f;
   comm_phy_tx_buf_fn phy_tx_buf_f;
+  comm_phy_tx_flush_fn phy_tx_flush_f;
   comm_lnk_phy_err_fn phy_err_f;
 } comm_lnk;
 
@@ -202,6 +210,7 @@ typedef struct {
   comm_app_user_ack_fn user_ack_f;
   comm_app_user_err_fn user_err_f;
   comm_app_user_inf_fn user_inf_f;
+  comm_app_user_alert_fn alert_f;
   comm_app_get_time_fn get_time_f;
   comm_tra_app_ack_fn ack_f;
   comm_tra_app_inf_fn inf_f;
@@ -221,8 +230,15 @@ struct comm {
 
 /* layer funcs */
 
-void comm_app_init(comm *comm, comm_app_user_rx_fn up_rx_f, comm_app_user_ack_fn ack_f, comm_tx_fn app_tx_f,
-    comm_app_get_time_fn get_time_f, comm_app_user_err_fn err_f, comm_app_user_inf_fn inf_f);
+void comm_app_init(
+    comm *comm,
+    comm_app_user_rx_fn up_rx_f,
+    comm_app_user_ack_fn ack_f,
+    comm_tx_fn app_tx_f,
+    comm_app_get_time_fn get_time_f,
+    comm_app_user_err_fn err_f,
+    comm_app_user_inf_fn inf_f,
+    comm_app_user_alert_fn alert_f);
 int comm_app_rx(comm *comm, comm_arg* rx);
 int comm_app_tx(comm *comm, comm_arg* tx);
 void comm_app_ack(comm *comm, comm_arg *rx);
@@ -236,7 +252,8 @@ void comm_nwk_init(comm *comm, comm_addr addr, comm_rx_fn up_rx_f, comm_tx_fn ln
 int comm_nwk_rx(comm *comm, comm_arg* rx);
 int comm_nwk_tx(comm *comm, comm_arg* tx);
 
-void comm_link_init(comm *comm, comm_rx_fn up_rx_f, comm_phy_tx_char_fn phy_tx_f, comm_phy_tx_buf_fn phy_tx_buf_f);
+void comm_link_init(comm *comm, comm_rx_fn up_rx_f, comm_phy_tx_char_fn phy_tx_f, comm_phy_tx_buf_fn phy_tx_buf_f,
+    comm_phy_tx_flush_fn phy_tx_flush_f);
 int comm_link_rx(comm *comm, unsigned char c);
 int comm_link_tx(comm *comm, comm_arg* tx);
 void comm_lnk_phy_err(comm *comm, int err);
@@ -249,14 +266,33 @@ void comm_phy_init(comm *comm, comm_phy_rx_char_fn rx);
    should not run simultaneously
  */
 
-/* initialize the comm stack */
-void comm_init(comm *comm, comm_addr this_addr, comm_phy_rx_char_fn rx, comm_phy_tx_char_fn tx,
-               comm_phy_tx_buf_fn tx_buf, comm_app_get_time_fn get_time,
-               comm_app_user_rx_fn user_rx, comm_app_user_ack_fn user_ack, comm_app_user_err_fn user_err,
-               comm_app_user_inf_fn user_inf);
+/* Initialize the comm stack
+   @param comm      the comm struct
+   @param this_addr address of this node
+   @param rx        function for receiving a character
+   @param tx        function for sending a character
+   @param tx_buf    function for sending buffer (may be NULL)
+   @param tx_flush  function for flushing a packet (may be NULL)
+   @param get_time  function for getting time
+   @param user_rx   callback when packet is received
+   @param user_ack  callback when a sent packet is acked
+   @param user_err  callback when an error occurs
+   @param user_inf  callback when stack reports communication information
+   @param alert     callback when stack receives a node alert packet
+ */
+void comm_init(
+    comm *comm,
+    comm_addr this_addr,
+    comm_phy_rx_char_fn rx, comm_phy_tx_char_fn tx, comm_phy_tx_buf_fn tx_buf, comm_phy_tx_flush_fn tx_flush,
+    comm_app_get_time_fn get_time,
+    comm_app_user_rx_fn user_rx, comm_app_user_ack_fn user_ack,
+    comm_app_user_err_fn user_err, comm_app_user_inf_fn user_inf, comm_app_user_alert_fn alert);
 #if COMM_LNK_ALLOCATE_RX_BUFFER
 /* If COMM_LNK_ALLOCATE_RX_BUFFER configuration is on, comm_init_alloc must be called
    directly after comm_init and before comm stack is used.
+   This will make link layer call alloc_f when a packet is received and use the returned buffer
+   for reporting packet up in stack to user.
+   free_f will be called when upcall to stack from link layer has finished.
  */
 void comm_init_alloc(comm *comm, comm_lnk_alloc_rx_fn alloc_f, comm_lnk_free_rx_fn free_f);
 #endif
@@ -267,13 +303,34 @@ int comm_phy_receive(comm* comm);
  */
 void comm_tick(comm *comm, comm_time time);
 /* Sends stuff to dst, returns negative for err or seqno.
+   If packet is acked, user will be callbacked in user_ack function in comm_init.
+   If packet is never acked but is supposed to, user will be callbacked in user_err function
+   in comm_init.
+   Any other error will be callbacked in user_err.
+   @param comm    the comm stack struct
+   @param dst     destination of packet
+   @param len     length of packet
+   @param data    contents of packet
+   @param app_ack if packet is supposed to be acked upon reception at destination
  */
 int comm_tx(comm *comm, comm_addr dst, unsigned int len, unsigned char *data, int app_ack);
 /* Directly returns answer to a received pkt as piggyback on ack. This must
-   be invoked within the stack call to comm_app_user_rx_fn user_rx given in init.
+   be invoked within the stack call to user_rx function given in comm_init.
+   @param comm    the comm stack struct
+   @param rx      the rx packet argument given in user_rx function upon reception
+   @param len     the length of the reply data
+   @param data    the reply data
  */
 int comm_reply(comm *comm, comm_arg* rx, unsigned short len, unsigned char *data);
-
-int comm_ping(comm *comm, int dst);
+/* Pings given node. Response will be callbacked to user_inf function in comm_init
+ */
+int comm_ping(comm *comm, comm_addr dst);
+/* Alerts other nodes of this node
+   @param comm    the comm stack struct
+   @param type    the type of alert, user defined
+   @param len     the length of the alert data
+   @param data    the data contents of the alert
+ */
+int comm_alert(comm *comm, unsigned char type, unsigned short len, unsigned char *data);
 
 #endif /* COMM_H_ */
