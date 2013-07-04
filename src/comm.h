@@ -99,7 +99,7 @@ typedef int (*comm_phy_tx_flush_fn)(comm *comm, comm_arg* tx);
 
 typedef int (*comm_phy_rx_char_fn)(unsigned char *c);
 
-typedef int (*comm_phy_lnk_rx_fn)(comm *comm, unsigned char c);
+typedef int (*comm_phy_lnk_rx_fn)(comm *comm, unsigned char c, unsigned char *fin);
 typedef void (*comm_lnk_phy_err_fn)(comm *comm, int err);
 
 typedef int (*comm_tx_fn)(comm *comm, comm_arg *tx);
@@ -254,7 +254,7 @@ int comm_nwk_tx(comm *comm, comm_arg* tx);
 
 void comm_link_init(comm *comm, comm_rx_fn up_rx_f, comm_phy_tx_char_fn phy_tx_f, comm_phy_tx_buf_fn phy_tx_buf_f,
     comm_phy_tx_flush_fn phy_tx_flush_f);
-int comm_link_rx(comm *comm, unsigned char c);
+int comm_link_rx(comm *comm, unsigned char c, unsigned char *fin);
 int comm_link_tx(comm *comm, comm_arg* tx);
 void comm_lnk_phy_err(comm *comm, int err);
 

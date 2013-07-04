@@ -18,7 +18,7 @@ int comm_phy_receive(comm* comm) {
   if (res == R_COMM_OK) {
     comm->phy.last_was_tmo = 0;
     comm->phy.conseq_tmo = 0;
-    res = comm->phy.up_rx_f(comm, c);
+    res = comm->phy.up_rx_f(comm, c, NULL);
     return res;
   } else {
     if (res == R_COMM_PHY_TMO) {

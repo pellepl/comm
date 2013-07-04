@@ -25,7 +25,7 @@ static unsigned short _crc_ccitt_16(unsigned short crc, unsigned char data) {
   return crc;
 }
 
-int comm_link_rx(comm *comm, unsigned char c) {
+int comm_link_rx(comm *comm, unsigned char c, unsigned char *fin) {
   switch (comm->lnk.state) {
   case COMM_LNK_STATE_PRE:
     if (c == COMM_LNK_PREAMBLE) {
@@ -85,6 +85,7 @@ int comm_link_rx(comm *comm, unsigned char c) {
         // remove previous allocations as it is now handled
         comm->lnk.free_f(comm, rx_arg->data, rx_arg);
 #endif
+        if (fin) *fin = 1;
         return res;
       } else {
         COMM_LNK_DBG("crc fail, len %i, remote %04x, local %04x\n", comm->lnk.len, comm->lnk.l_crc, comm->lnk.r_crc);
