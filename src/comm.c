@@ -17,6 +17,10 @@ void comm_init(
   comm_app_init(comm, user_rx, user_ack, comm_tra_tx, get_time, user_err, user_inf, alert);
 }
 
+void comm_conf(comm *comm, unsigned char conf) {
+  comm->conf = conf;
+}
+
 void comm_tick(comm *comm, comm_time time) {
   COMM_LOCK(comm);
   comm_tra_tick(comm, time);

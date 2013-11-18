@@ -30,6 +30,8 @@
 
 #define R_COMM_APP_NOT_AN_ACK   -12
 
+#define R_COMM_LNK_LEN_BAD      -13
+
 /* protocol defines */
 
 #define COMM_LNK_MAX_DATA       256
@@ -225,8 +227,11 @@ struct comm {
   comm_nwk nwk;
   comm_tra tra;
   comm_app app;
+  unsigned char conf;
 };
 
+#define COMM_CONF_SKIP_PREAMPLE      (1<<0)
+#define COMM_CONF_SKIP_CRC           (1<<1)
 
 /* layer funcs */
 
@@ -296,6 +301,11 @@ void comm_init(
  */
 void comm_init_alloc(comm *comm, comm_lnk_alloc_rx_fn alloc_f, comm_lnk_free_rx_fn free_f);
 #endif
+/* Enable or disable protocol parts
+   @param comm    the comm stack struct
+   @param conf    COMM_CONF_SKIP_PREAMPLE and/or COMM_CONF_SKIP_CRC
+ */
+void comm_conf(comm *comm, unsigned char conf);
 /* Calls comm_phy_rx_char_fn given in init and propagates it thru stack.
  */
 int comm_phy_receive(comm* comm);
