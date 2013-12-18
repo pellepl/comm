@@ -13,26 +13,40 @@
 #define COMM_TRA_INDEX_TO_USER(comm, ix) ((ix)+1 < (comm)->nwk.addr ? ((ix)+1) : ((ix)+2))
 #define COMM_TRA_USER_TO_INDEX(comm, u)  ((u) < (comm)->nwk.addr ? ((u)-1) : ((u)-2))
 
+#ifndef COMM_RESEND_TICK_RANDOM
+#define COMM_RESEND_TICK_RANDOM 0
+#endif
+
+#ifndef COMM_RESEND_TICK_LATER
+#define COMM_RESEND_TICK_LATER 0
+#endif
+
 static int comm_tra_tx_seqno(comm *comm, comm_arg* tx, unsigned short seqno);
 
 static void comm_tra_tx_resend(comm *comm, comm_time time) {
+  if (comm->tra.acks_tx_pend_count == 0) {
+    return;
+  }
 
   // check txed packets wanting acks and resend on timeout
   int i;
   for (i = 0; i < COMM_MAX_PENDING; i++) {
     struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
-    if (pending->busy &&
-        (time - pending->timestamp) >= COMM_RESEND_TICK) {
+    if (pending->busy) {
+      if (pending->timestamp > time || (time - pending->timestamp) < COMM_RESEND_TICK(pending->resends)) {
+        continue;
+      }
       if (pending->resends >= COMM_MAX_RESENDS) {
         // reached limit, waste packet
         COMM_TRA_DBG("pkt wasted %03x, tries %i", pending->arg.seqno, pending->resends);
         pending->busy = 0;
+        comm->tra.acks_tx_pend_count--;
         comm->app.user_err_f(comm, R_COMM_TRA_NO_ACK, pending->arg.seqno, pending->arg.len, pending->arg.data);
         continue;
       } else {
         // resend
         pending->resends++;
-        pending->timestamp = time;
+        pending->timestamp = time - COMM_RESEND_TICK_RANDOM;
         COMM_TRA_DBG("resending %03x try %i", pending->arg.seqno, pending->resends);
 
         unsigned short t_len = pending->arg.len;
@@ -45,6 +59,9 @@ static void comm_tra_tx_resend(comm *comm, comm_time time) {
         switch (res) {
         case R_COMM_OK:
           continue;
+        case R_COMM_PHY_TRY_LATER:
+          pending->timestamp -= COMM_RESEND_TICK_LATER;
+          continue;
         case R_COMM_PHY_FAIL:
           // major error, report and bail out
           comm->app.user_err_f(comm, res, pending->arg.seqno, comm->tra.acks_tx_pend[i].arg.len, pending->arg.data);
@@ -52,11 +69,12 @@ static void comm_tra_tx_resend(comm *comm, comm_time time) {
         default:
           // report and mark as free, app must take care of this
           pending->busy = 0;
+          comm->tra.acks_tx_pend_count--;
           comm->app.user_err_f(comm, res, pending->arg.seqno, pending->arg.len, pending->arg.data);
           break;
         }
       }
-    } // busy overdue slot
+    } // busy slot
   } // all slots
 }
 
@@ -90,6 +108,7 @@ static void comm_tra_tx_pending_acks(comm *comm) {
             comm->app.user_err_f(comm, res, COMM_TRA_FREE_ACK_SLOT, 0, 0);
             return;
           case R_COMM_PHY_TMO:
+          case R_COMM_PHY_TRY_LATER:
             // just mark this ack as free and continue silently, rely on resend
             comm->tra.acks_rx_pend[u][ix] = COMM_TRA_FREE_ACK_SLOT;
             break;
@@ -114,18 +133,21 @@ void comm_tra_tick(comm *comm, comm_time time) {
 }
 
 static int comm_tra_register_tx_tobeacked(comm *comm, comm_arg* tx) {
+  if (comm->tra.acks_tx_pend_count >= COMM_MAX_PENDING) {
+    return R_COMM_TRA_PEND_Q_FULL;
+  }
+
   int i;
   for (i = 0; i < COMM_MAX_PENDING; i++) {
     if (!comm->tra.acks_tx_pend[i].busy) {
       break;
     }
   }
-  if (i == COMM_MAX_PENDING) {
-    return R_COMM_TRA_PEND_Q_FULL;
-  }
+
   struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
 
   pending->busy = 1;
+  comm->tra.acks_tx_pend_count++;
   pending->timestamp = comm->app.get_time_f();
   pending->resends = 0;
   COMM_MEMCPY(&pending->arg, tx, sizeof(comm_arg));
@@ -139,14 +161,16 @@ static int comm_tra_register_tx_tobeacked(comm *comm, comm_arg* tx) {
 }
 
 static int comm_tra_got_rx_ack(comm *comm, comm_arg *rx) {
-
-  int i;
-  for (i = 0; i < COMM_MAX_PENDING; i++) {
-    struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
-    if (pending->busy && pending->arg.seqno == rx->seqno &&
-        (pending->arg.dst == rx->src || !COMM_USER_DIFFERENTIATION)) {
-      pending->busy = 0;
-      return R_COMM_OK;
+  if (comm->tra.acks_tx_pend_count > 0) {
+    int i;
+    for (i = 0; i < COMM_MAX_PENDING; i++) {
+      struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
+      if (pending->busy && pending->arg.seqno == rx->seqno &&
+          (pending->arg.dst == rx->src || !COMM_USER_DIFFERENTIATION)) {
+        pending->busy = 0;
+        comm->tra.acks_tx_pend_count--;
+        return R_COMM_OK;
+      }
     }
   }
   // got an ack for something not wanting ack

@@ -118,51 +118,53 @@ int comm_link_rx(comm *comm, unsigned char c, unsigned char *fin) {
 }
 
 int comm_link_tx(comm *comm, comm_arg* tx) {
-  int res;
+  int res = R_COMM_OK;
   unsigned short crc = COMM_CRC_INIT;
   unsigned int i;
 
   unsigned short len = tx->len;
   unsigned char *buf = tx->data;
 
-  if ((comm->conf & COMM_CONF_SKIP_CRC) == 0) {
-    for (i = 0; i < len; i++) {
-      crc = _crc_ccitt_16(crc, buf[i]);
+  if (comm->lnk.phy_tx_f) {
+    if ((comm->conf & COMM_CONF_SKIP_CRC) == 0) {
+      for (i = 0; i < len; i++) {
+        crc = _crc_ccitt_16(crc, buf[i]);
+      }
     }
-  }
 
-  if ((comm->conf & COMM_CONF_SKIP_PREAMPLE) == 0) {
-    res = comm->lnk.phy_tx_f(COMM_LNK_PREAMBLE);
-    if (res != R_COMM_OK) {
-      return res;
-    }
-  }
-
-  res = comm->lnk.phy_tx_f(len-1);
-  if (res != R_COMM_OK) {
-    return res;
-  }
-
-  if (comm->lnk.phy_tx_buf_f) {
-    res = comm->lnk.phy_tx_buf_f(buf, len);
-  } else {
-    for (i = 0; i < len; i++) {
-      res = comm->lnk.phy_tx_f(buf[i]);
+    if ((comm->conf & COMM_CONF_SKIP_PREAMPLE) == 0) {
+      res = comm->lnk.phy_tx_f(COMM_LNK_PREAMBLE);
       if (res != R_COMM_OK) {
         return res;
       }
     }
-  }
 
-  if ((comm->conf & COMM_CONF_SKIP_CRC) == 0) {
-    res = comm->lnk.phy_tx_f((crc>>8) & 0xff);
+    res = comm->lnk.phy_tx_f(len-1);
     if (res != R_COMM_OK) {
       return res;
     }
 
-    res = comm->lnk.phy_tx_f(crc & 0xff);
-    if (res != R_COMM_OK) {
-      return res;
+    if (comm->lnk.phy_tx_buf_f) {
+      res = comm->lnk.phy_tx_buf_f(buf, len);
+    } else {
+      for (i = 0; i < len; i++) {
+        res = comm->lnk.phy_tx_f(buf[i]);
+        if (res != R_COMM_OK) {
+          return res;
+        }
+      }
+    }
+
+    if ((comm->conf & COMM_CONF_SKIP_CRC) == 0) {
+      res = comm->lnk.phy_tx_f((crc>>8) & 0xff);
+      if (res != R_COMM_OK) {
+        return res;
+      }
+
+      res = comm->lnk.phy_tx_f(crc & 0xff);
+      if (res != R_COMM_OK) {
+        return res;
+      }
     }
   }
 
@@ -183,10 +185,10 @@ void comm_init_alloc(comm *comm, comm_lnk_alloc_rx_fn alloc_f, comm_lnk_free_rx_
   // NB, the stack will first allocate a buffer which will be used to fill with packet data.
   // When packet has been received successfully, a new buffer will be allocated for next-coming packet
   // and previous buffer will be sent up in stack. When stack returns to link layer, the previous
-  // buffer will be freed. The stack will this always have at least one buffer allocated while waiting
-  // for packet, and at least two buffers allocated while reporting a packet up to upper layers.
-  // Would the upper layers switch thread context or similar, more buffers could be simultaneously
-  // allocated.
+  // buffer will be freed. The stack will this way always have at least one buffer allocated while
+  // waiting for packet, and at least two buffers allocated while reporting a packet up to upper
+  // layers. Would the upper layers switch thread context or similar, more buffers could be
+  // simultaneously allocated.
   comm->lnk.alloc_f = alloc_f;
   comm->lnk.free_f = free_f;
   // allocate first instance of link buffer and link arg

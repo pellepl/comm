@@ -32,6 +32,8 @@
 
 #define R_COMM_LNK_LEN_BAD      -13
 
+#define R_COMM_PHY_TRY_LATER    -14
+
 /* protocol defines */
 
 #define COMM_LNK_MAX_DATA       256
@@ -199,6 +201,7 @@ typedef struct {
   comm_rx_fn up_rx_f;
   comm_tx_fn down_tx_f;
 
+  unsigned char acks_tx_pend_count;
   unsigned short seqno[COMM_TRA_MAX_USERS];
   unsigned short acks_rx_pend[COMM_TRA_MAX_USERS][COMM_MAX_PENDING];
   struct comm_tra_pkt acks_tx_pend[COMM_MAX_PENDING];
@@ -273,6 +276,7 @@ void comm_phy_init(comm *comm, comm_phy_rx_char_fn rx);
 
 /* Initialize the comm stack
    @param comm      the comm struct
+   @param conf      0, or COMM_CONF_SKIP_PREAMPLE and/or COMM_CONF_SKIP_CRC
    @param this_addr address of this node
    @param rx        function for receiving a character
    @param tx        function for sending a character
@@ -287,6 +291,7 @@ void comm_phy_init(comm *comm, comm_phy_rx_char_fn rx);
  */
 void comm_init(
     comm *comm,
+    unsigned char conf,
     comm_addr this_addr,
     comm_phy_rx_char_fn rx, comm_phy_tx_char_fn tx, comm_phy_tx_buf_fn tx_buf, comm_phy_tx_flush_fn tx_flush,
     comm_app_get_time_fn get_time,

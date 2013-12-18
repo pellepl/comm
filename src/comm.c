@@ -3,6 +3,7 @@
 
 void comm_init(
     comm *comm,
+    unsigned char conf,
     comm_addr this_addr,
     comm_phy_rx_char_fn rx, comm_phy_tx_char_fn tx, comm_phy_tx_buf_fn tx_buf, comm_phy_tx_flush_fn tx_flush,
     comm_app_get_time_fn get_time,
@@ -10,6 +11,7 @@ void comm_init(
     comm_app_user_err_fn user_err, comm_app_user_inf_fn user_inf, comm_app_user_alert_fn alert)
 {
   COMM_MEMSET(comm, 0, sizeof(comm));
+  comm->conf = conf;
   comm_phy_init(comm, rx);
   comm_link_init(comm, comm_nwk_rx, tx, tx_buf, tx_flush);
   comm_nwk_init(comm, this_addr, comm_tra_rx, comm_link_tx);
