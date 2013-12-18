@@ -13,26 +13,26 @@
 
 #define R_COMM_OK               0
 
-#define R_COMM_PHY_FAIL         -1
-#define R_COMM_PHY_TMO          -2
+#define R_COMM_PHY_FAIL         -20000
+#define R_COMM_PHY_TMO          -20001
 
-#define R_COMM_LNK_PRE_FAIL     -3
-#define R_COMM_LNK_CRC_FAIL     -4
+#define R_COMM_LNK_PRE_FAIL     -20010
+#define R_COMM_LNK_CRC_FAIL     -20011
 
-#define R_COMM_NWK_NOT_ME       -5
-#define R_COMM_NWK_TO_SELF      -6
-#define R_COMM_NWK_BAD_ADDR     -7
+#define R_COMM_NWK_NOT_ME       -20020
+#define R_COMM_NWK_TO_SELF      -20021
+#define R_COMM_NWK_BAD_ADDR     -20022
 
-#define R_COMM_TRA_PEND_Q_FULL  -8
-#define R_COMM_TRA_ACK_Q_FULL   -9
-#define R_COMM_TRA_NO_ACK       -10
-#define R_COMM_TRA_CANNOT_ACK_BROADCAST -11
+#define R_COMM_TRA_PEND_Q_FULL  -20030
+#define R_COMM_TRA_ACK_Q_FULL   -20031
+#define R_COMM_TRA_NO_ACK       -20032
+#define R_COMM_TRA_CANNOT_ACK_BROADCAST -20033
 
-#define R_COMM_APP_NOT_AN_ACK   -12
+#define R_COMM_APP_NOT_AN_ACK   -20040
 
-#define R_COMM_LNK_LEN_BAD      -13
+#define R_COMM_LNK_LEN_BAD      -20012
 
-#define R_COMM_PHY_TRY_LATER    -14
+#define R_COMM_PHY_TRY_LATER    -20002
 
 /* protocol defines */
 
