@@ -15,9 +15,11 @@
 
 #define R_COMM_PHY_FAIL         -20000
 #define R_COMM_PHY_TMO          -20001
+#define R_COMM_PHY_TRY_LATER    -20002
 
 #define R_COMM_LNK_PRE_FAIL     -20010
 #define R_COMM_LNK_CRC_FAIL     -20011
+#define R_COMM_LNK_LEN_BAD      -20012
 
 #define R_COMM_NWK_NOT_ME       -20020
 #define R_COMM_NWK_TO_SELF      -20021
@@ -30,9 +32,7 @@
 
 #define R_COMM_APP_NOT_AN_ACK   -20040
 
-#define R_COMM_LNK_LEN_BAD      -20012
 
-#define R_COMM_PHY_TRY_LATER    -20002
 
 /* protocol defines */
 
@@ -99,36 +99,36 @@ typedef struct comm comm;
 
 typedef int (*comm_phy_tx_char_fn)(unsigned char c);
 typedef int (*comm_phy_tx_buf_fn)(unsigned char *c, unsigned short len);
-typedef int (*comm_phy_tx_flush_fn)(comm *comm, comm_arg* tx);
+typedef int (*comm_phy_tx_flush_fn)(comm *c, comm_arg* tx);
 
 typedef int (*comm_phy_rx_char_fn)(unsigned char *c);
 
-typedef int (*comm_phy_lnk_rx_fn)(comm *comm, unsigned char c, unsigned char *fin);
-typedef void (*comm_lnk_phy_err_fn)(comm *comm, int err);
+typedef int (*comm_phy_lnk_rx_fn)(comm *c, unsigned char data, unsigned char *fin);
+typedef void (*comm_lnk_phy_err_fn)(comm *c, int err);
 
-typedef int (*comm_tx_fn)(comm *comm, comm_arg *tx);
-typedef int (*comm_rx_fn)(comm *comm, comm_arg *rx);
+typedef int (*comm_tx_fn)(comm *c, comm_arg *tx);
+typedef int (*comm_rx_fn)(comm *c, comm_arg *rx);
 
-typedef void (*comm_tra_app_ack_fn)(comm *comm, comm_arg *rx);
+typedef void (*comm_tra_app_ack_fn)(comm *c, comm_arg *rx);
 
 /* user / application func types */
 
 typedef comm_time (*comm_app_get_time_fn)(void);
 /* invoked on transport info */
-typedef void (*comm_tra_app_inf_fn)(comm *comm, comm_arg *rx);
+typedef void (*comm_tra_app_inf_fn)(comm *c, comm_arg *rx);
 /* received stuff from rx->src, in here one might to call comm_app_reply  */
-typedef int (*comm_app_user_rx_fn)(comm *comm, comm_arg *rx,  unsigned short len, unsigned char *data);
+typedef int (*comm_app_user_rx_fn)(comm *c, comm_arg *rx,  unsigned short len, unsigned char *data);
 /* received an ack */
-typedef void (*comm_app_user_ack_fn)(comm *comm, comm_arg *rx, unsigned short seqno, unsigned short len, unsigned char *data);
+typedef void (*comm_app_user_ack_fn)(comm *c, comm_arg *rx, unsigned short seqno, unsigned short len, unsigned char *data);
 /* invoked on error */
-typedef void (*comm_app_user_err_fn)(comm *comm, int err, unsigned short seqno, unsigned short len, unsigned char *data);
+typedef void (*comm_app_user_err_fn)(comm *c, int err, unsigned short seqno, unsigned short len, unsigned char *data);
 /* invoked on transport info */
-typedef void (*comm_app_user_inf_fn)(comm *comm, comm_arg *rx);
+typedef void (*comm_app_user_inf_fn)(comm *c, comm_arg *rx);
 /* invoked on node alert packet */
-typedef void (*comm_app_user_alert_fn)(comm *comm, comm_addr node_address, unsigned char type, unsigned short len, unsigned char *data);
+typedef void (*comm_app_user_alert_fn)(comm *c, comm_addr node_address, unsigned char type, unsigned short len, unsigned char *data);
 #if COMM_LNK_ALLOCATE_RX_BUFFER
-typedef void (*comm_lnk_alloc_rx_fn)(comm *comm, void **data, void **arg, unsigned int data_len, unsigned int arg_len);
-typedef void (*comm_lnk_free_rx_fn)(comm *comm, void *data, void *arg);
+typedef void (*comm_lnk_alloc_rx_fn)(comm *c, void **data, void **arg, unsigned int data_len, unsigned int arg_len);
+typedef void (*comm_lnk_free_rx_fn)(comm *c, void *data, void *arg);
 #endif
 
 /* PHY, primitive timeout and pipe error handling
@@ -231,6 +231,12 @@ struct comm {
   comm_tra tra;
   comm_app app;
   unsigned char conf;
+#ifdef COMM_STATS
+  struct {
+    unsigned int tx; // packets requiring ack
+    unsigned int tx_fail; // resent packets requiring ack
+  } stat;
+#endif
 };
 
 #define COMM_CONF_SKIP_PREAMPLE      (1<<0)
@@ -239,7 +245,7 @@ struct comm {
 /* layer funcs */
 
 void comm_app_init(
-    comm *comm,
+    comm *c,
     comm_app_user_rx_fn up_rx_f,
     comm_app_user_ack_fn ack_f,
     comm_tx_fn app_tx_f,
@@ -247,26 +253,26 @@ void comm_app_init(
     comm_app_user_err_fn err_f,
     comm_app_user_inf_fn inf_f,
     comm_app_user_alert_fn alert_f);
-int comm_app_rx(comm *comm, comm_arg* rx);
-int comm_app_tx(comm *comm, comm_arg* tx);
-void comm_app_ack(comm *comm, comm_arg *rx);
+int comm_app_rx(comm *c, comm_arg* rx);
+int comm_app_tx(comm *c, comm_arg* tx);
+void comm_app_ack(comm *c, comm_arg *rx);
 
-void comm_tra_init(comm *comm, comm_rx_fn up_rx_f, comm_tx_fn nwk_tx_f);
-int comm_tra_rx(comm *comm, comm_arg* rx);
-int comm_tra_tx(comm *comm, comm_arg* tx);
-void comm_tra_tick(comm *comm, comm_time time);
+void comm_tra_init(comm *c, comm_rx_fn up_rx_f, comm_tx_fn nwk_tx_f);
+int comm_tra_rx(comm *c, comm_arg* rx);
+int comm_tra_tx(comm *c, comm_arg* tx);
+void comm_tra_tick(comm *c, comm_time time);
 
-void comm_nwk_init(comm *comm, comm_addr addr, comm_rx_fn up_rx_f, comm_tx_fn lnk_tx_f);
-int comm_nwk_rx(comm *comm, comm_arg* rx);
-int comm_nwk_tx(comm *comm, comm_arg* tx);
+void comm_nwk_init(comm *c, comm_addr addr, comm_rx_fn up_rx_f, comm_tx_fn lnk_tx_f);
+int comm_nwk_rx(comm *c, comm_arg* rx);
+int comm_nwk_tx(comm *c, comm_arg* tx);
 
-void comm_link_init(comm *comm, comm_rx_fn up_rx_f, comm_phy_tx_char_fn phy_tx_f, comm_phy_tx_buf_fn phy_tx_buf_f,
+void comm_link_init(comm *c, comm_rx_fn up_rx_f, comm_phy_tx_char_fn phy_tx_f, comm_phy_tx_buf_fn phy_tx_buf_f,
     comm_phy_tx_flush_fn phy_tx_flush_f);
-int comm_link_rx(comm *comm, unsigned char c, unsigned char *fin);
-int comm_link_tx(comm *comm, comm_arg* tx);
-void comm_lnk_phy_err(comm *comm, int err);
+int comm_link_rx(comm *c, unsigned char data, unsigned char *fin);
+int comm_link_tx(comm *c, comm_arg* tx);
+void comm_lnk_phy_err(comm *c, int err);
 
-void comm_phy_init(comm *comm, comm_phy_rx_char_fn rx);
+void comm_phy_init(comm *c, comm_phy_rx_char_fn rx);
 
 /* api funcs */
 
@@ -290,7 +296,7 @@ void comm_phy_init(comm *comm, comm_phy_rx_char_fn rx);
    @param alert     callback when stack receives a node alert packet
  */
 void comm_init(
-    comm *comm,
+    comm *c,
     unsigned char conf,
     comm_addr this_addr,
     comm_phy_rx_char_fn rx, comm_phy_tx_char_fn tx, comm_phy_tx_buf_fn tx_buf, comm_phy_tx_flush_fn tx_flush,
@@ -304,19 +310,19 @@ void comm_init(
    for reporting packet up in stack to user.
    free_f will be called when upcall to stack from link layer has finished.
  */
-void comm_init_alloc(comm *comm, comm_lnk_alloc_rx_fn alloc_f, comm_lnk_free_rx_fn free_f);
+void comm_init_alloc(comm *c, comm_lnk_alloc_rx_fn alloc_f, comm_lnk_free_rx_fn free_f);
 #endif
 /* Enable or disable protocol parts
    @param comm    the comm stack struct
    @param conf    COMM_CONF_SKIP_PREAMPLE and/or COMM_CONF_SKIP_CRC
  */
-void comm_conf(comm *comm, unsigned char conf);
+void comm_conf(comm *c, unsigned char conf);
 /* Calls comm_phy_rx_char_fn given in init and propagates it thru stack.
  */
-int comm_phy_receive(comm* comm);
+int comm_phy_receive(comm *c);
 /* Call this in a system tick func to dispatch acks and resend unacked stuff.
  */
-void comm_tick(comm *comm, comm_time time);
+void comm_tick(comm *c, comm_time time);
 /* Sends stuff to dst, returns negative for err or seqno.
    If packet is acked, user will be callbacked in user_ack function in comm_init.
    If packet is never acked but is supposed to, user will be callbacked in user_err function
@@ -328,7 +334,7 @@ void comm_tick(comm *comm, comm_time time);
    @param data    contents of packet
    @param app_ack if packet is supposed to be acked upon reception at destination
  */
-int comm_tx(comm *comm, comm_addr dst, unsigned int len, unsigned char *data, int app_ack);
+int comm_tx(comm *c, comm_addr dst, unsigned int len, unsigned char *data, int app_ack);
 /* Directly returns answer to a received pkt as piggyback on ack. This must
    be invoked within the stack call to user_rx function given in comm_init.
    @param comm    the comm stack struct
@@ -336,16 +342,20 @@ int comm_tx(comm *comm, comm_addr dst, unsigned int len, unsigned char *data, in
    @param len     the length of the reply data
    @param data    the reply data
  */
-int comm_reply(comm *comm, comm_arg* rx, unsigned short len, unsigned char *data);
+int comm_reply(comm *c, comm_arg* rx, unsigned short len, unsigned char *data);
 /* Pings given node. Response will be callbacked to user_inf function in comm_init
  */
-int comm_ping(comm *comm, comm_addr dst);
+int comm_ping(comm *c, comm_addr dst);
 /* Alerts other nodes of this node
    @param comm    the comm stack struct
    @param type    the type of alert, user defined
    @param len     the length of the alert data
    @param data    the data contents of the alert
  */
-int comm_alert(comm *comm, unsigned char type, unsigned short len, unsigned char *data);
+int comm_alert(comm *c, unsigned char type, unsigned short len, unsigned char *data);
 
+#ifdef COMM_STATS
+void comm_clear_stats(comm *c);
+unsigned char comm_squal(comm *c);
+#endif
 #endif /* COMM_H_ */

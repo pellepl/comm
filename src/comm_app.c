@@ -8,7 +8,7 @@
 #include "comm.h"
 
 void comm_app_init(
-    comm *comm,
+    comm *co,
     comm_app_user_rx_fn up_rx_f,
     comm_app_user_ack_fn ack_f,
     comm_tx_fn app_tx_f,
@@ -16,32 +16,32 @@ void comm_app_init(
     comm_app_user_err_fn err_f,
     comm_app_user_inf_fn inf_f,
     comm_app_user_alert_fn alert_f) {
-  comm->app.app_tx_f = app_tx_f;
-  comm->app.user_ack_f = ack_f;
-  comm->app.user_up_rx_f = up_rx_f;
-  comm->app.user_err_f = err_f;
-  comm->app.get_time_f = get_time_f;
-  comm->app.ack_f = comm_app_ack;
-  comm->app.inf_f = inf_f;
-  comm->app.alert_f = alert_f;
+  co->app.app_tx_f = app_tx_f;
+  co->app.user_ack_f = ack_f;
+  co->app.user_up_rx_f = up_rx_f;
+  co->app.user_err_f = err_f;
+  co->app.get_time_f = get_time_f;
+  co->app.ack_f = comm_app_ack;
+  co->app.inf_f = inf_f;
+  co->app.alert_f = alert_f;
 }
 
-int comm_app_rx(comm *comm, comm_arg *rx) {
-   return comm->app.user_up_rx_f(comm, rx, rx->len, rx->len > 0 ? rx->data : 0);
+int comm_app_rx(comm *co, comm_arg *rx) {
+   return co->app.user_up_rx_f(co, rx, rx->len, rx->len > 0 ? rx->data : 0);
 }
 
-void comm_app_ack(comm *comm, comm_arg *rx) {
-   return comm->app.user_ack_f(comm, rx, rx->seqno, rx->len, rx->len > 0 ? rx->data : 0);
+void comm_app_ack(comm *co, comm_arg *rx) {
+   return co->app.user_ack_f(co, rx, rx->seqno, rx->len, rx->len > 0 ? rx->data : 0);
 }
 
-void comm_app_inf(comm *comm, comm_arg *rx) {
-   return comm->app.user_inf_f(comm, rx);
+void comm_app_inf(comm *co, comm_arg *rx) {
+   return co->app.user_inf_f(co, rx);
 }
 
-int comm_app_tx(comm *comm, comm_arg *tx) {
+int comm_app_tx(comm *co, comm_arg *tx) {
   int res;
   COMM_LOCK(comm);
-  res = comm->app.app_tx_f(comm, tx);
+  res = co->app.app_tx_f(co, tx);
   COMM_UNLOCK(comm);
   return res;
 }

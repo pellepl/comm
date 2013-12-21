@@ -21,17 +21,17 @@
 #define COMM_RESEND_TICK_LATER 0
 #endif
 
-static int comm_tra_tx_seqno(comm *comm, comm_arg* tx, unsigned short seqno);
+static int comm_tra_tx_seqno(comm *co, comm_arg* tx, unsigned short seqno);
 
-static void comm_tra_tx_resend(comm *comm, comm_time time) {
-  if (comm->tra.acks_tx_pend_count == 0) {
+static void comm_tra_tx_resend(comm *co, comm_time time) {
+  if (co->tra.acks_tx_pend_count == 0) {
     return;
   }
 
   // check txed packets wanting acks and resend on timeout
   int i;
   for (i = 0; i < COMM_MAX_PENDING; i++) {
-    struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
+    struct comm_tra_pkt *pending = &co->tra.acks_tx_pend[i];
     if (pending->busy) {
       if (pending->timestamp > time || (time - pending->timestamp) < COMM_RESEND_TICK(pending->resends)) {
         continue;
@@ -40,8 +40,11 @@ static void comm_tra_tx_resend(comm *comm, comm_time time) {
         // reached limit, waste packet
         COMM_TRA_DBG("pkt wasted %03x, tries %i", pending->arg.seqno, pending->resends);
         pending->busy = 0;
-        comm->tra.acks_tx_pend_count--;
-        comm->app.user_err_f(comm, R_COMM_TRA_NO_ACK, pending->arg.seqno, pending->arg.len, pending->arg.data);
+        co->tra.acks_tx_pend_count--;
+        co->app.user_err_f(co, R_COMM_TRA_NO_ACK, pending->arg.seqno, pending->arg.len, pending->arg.data);
+#ifdef COMM_STATS
+        co->stat.tx_fail++;
+#endif
         continue;
       } else {
         // resend
@@ -51,11 +54,14 @@ static void comm_tra_tx_resend(comm *comm, comm_time time) {
 
         unsigned short t_len = pending->arg.len;
         unsigned char *t_data = pending->arg.data;
-        int res = comm->tra.down_tx_f(comm, &pending->arg);
+        int res = co->tra.down_tx_f(co, &pending->arg);
         // reset length and data ptr
         pending->arg.len = t_len;
         pending->arg.data = t_data;
 
+#ifdef COMM_STATS
+        co->stat.tx_fail++;
+#endif
         switch (res) {
         case R_COMM_OK:
           continue;
@@ -64,13 +70,13 @@ static void comm_tra_tx_resend(comm *comm, comm_time time) {
           continue;
         case R_COMM_PHY_FAIL:
           // major error, report and bail out
-          comm->app.user_err_f(comm, res, pending->arg.seqno, comm->tra.acks_tx_pend[i].arg.len, pending->arg.data);
+          co->app.user_err_f(co, res, pending->arg.seqno, co->tra.acks_tx_pend[i].arg.len, pending->arg.data);
           return;
         default:
           // report and mark as free, app must take care of this
           pending->busy = 0;
-          comm->tra.acks_tx_pend_count--;
-          comm->app.user_err_f(comm, res, pending->arg.seqno, pending->arg.len, pending->arg.data);
+          co->tra.acks_tx_pend_count--;
+          co->app.user_err_f(co, res, pending->arg.seqno, pending->arg.len, pending->arg.data);
           break;
         }
       }
@@ -78,45 +84,45 @@ static void comm_tra_tx_resend(comm *comm, comm_time time) {
   } // all slots
 }
 
-static void comm_tra_tx_pending_acks(comm *comm) {
+static void comm_tra_tx_pending_acks(comm *co) {
 
   int u, ix, acks = 0;
   for (u = 0; u < (COMM_TRA_MAX_USERS); u++) {
     for (ix = 0; ix < COMM_MAX_PENDING; ix++) {
-      if (comm->tra.acks_rx_pend[u][ix] != COMM_TRA_FREE_ACK_SLOT) {
+      if (co->tra.acks_rx_pend[u][ix] != COMM_TRA_FREE_ACK_SLOT) {
         comm_arg tx_ack;
         unsigned char ack_data[COMM_H_SIZE + 1];
-        tx_ack.src = comm->nwk.addr;
-        tx_ack.dst = COMM_TRA_INDEX_TO_USER(comm, u);
+        tx_ack.src = co->nwk.addr;
+        tx_ack.dst = COMM_TRA_INDEX_TO_USER(co, u);
         tx_ack.flags = COMM_FLAG_ISACK_BIT;
         tx_ack.data = &ack_data[COMM_H_SIZE];
         tx_ack.len = 0;
-        int res = comm_tra_tx_seqno(comm, &tx_ack, comm->tra.acks_rx_pend[u][ix]);
-        COMM_TRA_DBG("tx ack %03x to %i[%i], res %i", comm->tra.acks_rx_pend[u][ix],tx_ack.dst, u,res);
+        int res = comm_tra_tx_seqno(co, &tx_ack, co->tra.acks_rx_pend[u][ix]);
+        COMM_TRA_DBG("tx ack %03x to %i[%i], res %i", co->tra.acks_rx_pend[u][ix],tx_ack.dst, u,res);
         if (res == R_COMM_OK) {
-          comm->tra.acks_rx_pend[u][ix] = COMM_TRA_FREE_ACK_SLOT;
+          co->tra.acks_rx_pend[u][ix] = COMM_TRA_FREE_ACK_SLOT;
           acks++;
           if (COMM_ACK_THROTTLE != 0 && acks > COMM_ACK_THROTTLE) {
             return;
           }
         } else {
           // error
-          COMM_TRA_DBG("tx ack %03x to %i[%i] fail, err %i", comm->tra.acks_rx_pend[u][ix], tx_ack.dst, u, res);
+          COMM_TRA_DBG("tx ack %03x to %i[%i] fail, err %i", co->tra.acks_rx_pend[u][ix], tx_ack.dst, u, res);
           switch (res) {
           case R_COMM_PHY_FAIL:
             // major error, report and bail out
-            comm->app.user_err_f(comm, res, COMM_TRA_FREE_ACK_SLOT, 0, 0);
+            co->app.user_err_f(co, res, COMM_TRA_FREE_ACK_SLOT, 0, 0);
             return;
           case R_COMM_PHY_TMO:
           case R_COMM_PHY_TRY_LATER:
             // just mark this ack as free and continue silently, rely on resend
-            comm->tra.acks_rx_pend[u][ix] = COMM_TRA_FREE_ACK_SLOT;
+            co->tra.acks_rx_pend[u][ix] = COMM_TRA_FREE_ACK_SLOT;
             break;
           case R_COMM_NWK_BAD_ADDR:
           default:
             // report and mark as free, rely on resend
-            comm->app.user_err_f(comm, res, COMM_TRA_FREE_ACK_SLOT, 0, 0);
-            comm->tra.acks_rx_pend[u][ix] = COMM_TRA_FREE_ACK_SLOT;
+            co->app.user_err_f(co, res, COMM_TRA_FREE_ACK_SLOT, 0, 0);
+            co->tra.acks_rx_pend[u][ix] = COMM_TRA_FREE_ACK_SLOT;
             break;
           }
         }
@@ -125,30 +131,30 @@ static void comm_tra_tx_pending_acks(comm *comm) {
   } // per user
 }
 
-void comm_tra_tick(comm *comm, comm_time time) {
+void comm_tra_tick(comm *co, comm_time time) {
 #if COMM_ACK_DIRECTLY == 0
   comm_tra_tx_pending_acks(comm);
 #endif
-  comm_tra_tx_resend(comm, time);
+  comm_tra_tx_resend(co, time);
 }
 
-static int comm_tra_register_tx_tobeacked(comm *comm, comm_arg* tx) {
-  if (comm->tra.acks_tx_pend_count >= COMM_MAX_PENDING) {
+static int comm_tra_register_tx_tobeacked(comm *co, comm_arg* tx) {
+  if (co->tra.acks_tx_pend_count >= COMM_MAX_PENDING) {
     return R_COMM_TRA_PEND_Q_FULL;
   }
 
   int i;
   for (i = 0; i < COMM_MAX_PENDING; i++) {
-    if (!comm->tra.acks_tx_pend[i].busy) {
+    if (!co->tra.acks_tx_pend[i].busy) {
       break;
     }
   }
 
-  struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
+  struct comm_tra_pkt *pending = &co->tra.acks_tx_pend[i];
 
   pending->busy = 1;
-  comm->tra.acks_tx_pend_count++;
-  pending->timestamp = comm->app.get_time_f();
+  co->tra.acks_tx_pend_count++;
+  pending->timestamp = co->app.get_time_f();
   pending->resends = 0;
   COMM_MEMCPY(&pending->arg, tx, sizeof(comm_arg));
   COMM_MEMCPY(&pending->data[COMM_H_SIZE - COMM_H_SIZE_TRA], tx->data, tx->len);
@@ -160,15 +166,15 @@ static int comm_tra_register_tx_tobeacked(comm *comm, comm_arg* tx) {
   return R_COMM_OK;
 }
 
-static int comm_tra_got_rx_ack(comm *comm, comm_arg *rx) {
-  if (comm->tra.acks_tx_pend_count > 0) {
+static int comm_tra_got_rx_ack(comm *co, comm_arg *rx) {
+  if (co->tra.acks_tx_pend_count > 0) {
     int i;
     for (i = 0; i < COMM_MAX_PENDING; i++) {
-      struct comm_tra_pkt *pending = &comm->tra.acks_tx_pend[i];
+      struct comm_tra_pkt *pending = &co->tra.acks_tx_pend[i];
       if (pending->busy && pending->arg.seqno == rx->seqno &&
           (pending->arg.dst == rx->src || !COMM_USER_DIFFERENTIATION)) {
         pending->busy = 0;
-        comm->tra.acks_tx_pend_count--;
+        co->tra.acks_tx_pend_count--;
         return R_COMM_OK;
       }
     }
@@ -179,18 +185,23 @@ static int comm_tra_got_rx_ack(comm *comm, comm_arg *rx) {
   return R_COMM_OK;
 }
 
-static int comm_tra_register_rx_reqack_pending(comm *comm, comm_arg* rx, unsigned short **ack_entry) {
+static int comm_tra_register_rx_reqack_pending(comm *co, comm_arg* rx, unsigned short **ack_entry) {
 
   int i;
   int cand = COMM_MAX_PENDING;
-  unsigned char u = COMM_USER_DIFFERENTIATION ? COMM_TRA_USER_TO_INDEX(comm, rx->src) : 0;
+  unsigned char u = COMM_USER_DIFFERENTIATION ? COMM_TRA_USER_TO_INDEX(co, rx->src) : 0;
+#ifdef COMM_STATS
+  if (rx->flags & COMM_FLAG_RESENT_BIT) {
+    co->stat.tx_fail++; // txed ack have been lost or pkt never rxed
+  }
+#endif
   for (i = 0; i < COMM_MAX_PENDING; i++) {
-    if (comm->tra.acks_rx_pend[u][i] == rx->seqno) {
+    if (co->tra.acks_rx_pend[u][i] == rx->seqno) {
       // already in ack queue, fill same
       cand = i;
       rx->flags |= COMM_STAT_RESEND_BIT;
       break;
-    } else if (comm->tra.acks_rx_pend[u][i] == COMM_TRA_FREE_ACK_SLOT && cand == COMM_MAX_PENDING) {
+    } else if (co->tra.acks_rx_pend[u][i] == COMM_TRA_FREE_ACK_SLOT && cand == COMM_MAX_PENDING) {
       // new ack requested
       cand = i;
     }
@@ -199,36 +210,36 @@ static int comm_tra_register_rx_reqack_pending(comm *comm, comm_arg* rx, unsigne
     return R_COMM_TRA_ACK_Q_FULL;
   }
 
-  comm->tra.acks_rx_pend[u][cand] = rx->seqno;
-  *ack_entry = &(comm->tra.acks_rx_pend[u][cand]);
+  co->tra.acks_rx_pend[u][cand] = rx->seqno;
+  *ack_entry = &(co->tra.acks_rx_pend[u][cand]);
 
   return R_COMM_OK;
 }
 
-static int comm_tra_send_inf(comm *comm, int dst, unsigned char inf) {
+static int comm_tra_send_inf(comm *co, int dst, unsigned char inf) {
   comm_arg tx_inf;
   unsigned char inf_data[COMM_H_SIZE + 2];
-  tx_inf.src = comm->nwk.addr;
+  tx_inf.src = co->nwk.addr;
   tx_inf.dst = dst;
   tx_inf.flags = COMM_FLAG_INF_BIT;
   tx_inf.data = &inf_data[COMM_H_SIZE];
   tx_inf.data[0] = inf;
   tx_inf.len = 1;
-  int res = comm_tra_tx(comm, &tx_inf);
+  int res = comm_tra_tx(co, &tx_inf);
   return res;
 }
 
-static int comm_tra_handle_remote_inf(comm *comm, comm_arg* rx) {
+static int comm_tra_handle_remote_inf(comm *co, comm_arg* rx) {
   // todo
   if (rx->len > 0) {
     unsigned char code = *rx->data;
     switch (code) {
     case COMM_TRA_INF_PING:
-      return comm_tra_send_inf(comm, rx->src, COMM_TRA_INF_PONG);
+      return comm_tra_send_inf(co, rx->src, COMM_TRA_INF_PONG);
     case COMM_TRA_INF_PONG:
     case COMM_TRA_INF_CONGESTION:
-      if (comm->app.inf_f) {
-        comm->app.inf_f(comm, rx);
+      if (co->app.inf_f) {
+        co->app.inf_f(co, rx);
       }
       break;
     }
@@ -236,7 +247,7 @@ static int comm_tra_handle_remote_inf(comm *comm, comm_arg* rx) {
   return R_COMM_OK;
 }
 
-static int comm_tra_handle_rx(comm *comm, comm_arg* rx) {
+static int comm_tra_handle_rx(comm *co, comm_arg* rx) {
 
   int res = R_COMM_OK;
   COMM_TRA_DBG("rx pkt len %i, flags %02x, seq %03x", rx->len, rx->flags, rx->seqno);
@@ -244,28 +255,28 @@ static int comm_tra_handle_rx(comm *comm, comm_arg* rx) {
   if (rx->flags & COMM_FLAG_INF_BIT) {
     // remote transport info packet
     COMM_TRA_DBG("info pkt");
-    res = comm_tra_handle_remote_inf(comm, rx);
+    res = comm_tra_handle_remote_inf(co, rx);
   } else if (rx->flags & COMM_FLAG_REQACK_BIT) {
     // got remote packet, and packet wants to be acked
     COMM_TRA_DBG("rx pkt wants ack");
-    res = comm_tra_register_rx_reqack_pending(comm, rx, &ack_entry);
+    res = comm_tra_register_rx_reqack_pending(co, rx, &ack_entry);
     if (res == R_COMM_TRA_ACK_Q_FULL) {
-      (void)comm_tra_send_inf(comm, rx->src, COMM_TRA_INF_CONGESTION);
+      (void)comm_tra_send_inf(co, rx->src, COMM_TRA_INF_CONGESTION);
     }
   } else if (rx->flags & COMM_FLAG_ISACK_BIT) {
     // got ack for local packet
     COMM_TRA_DBG("rx pkt is ack");
-    res = comm_tra_got_rx_ack(comm, rx);
+    res = comm_tra_got_rx_ack(co, rx);
     if (res == R_COMM_OK) {
       if ((rx->flags & COMM_STAT_ACK_MISS_BIT) == 0) {
-        comm->app.ack_f(comm, rx);
+        co->app.ack_f(co, rx);
       }
     }
   }
   if (res == R_COMM_OK && rx->len > 0) {
     // only send up to app if all ok and len is ok, acks and infs already reported
     if ((rx->flags & (COMM_FLAG_ISACK_BIT | COMM_FLAG_INF_BIT)) == 0) {
-      res = comm->tra.up_rx_f(comm, rx);
+      res = co->tra.up_rx_f(co, rx);
       // now, see if app wants to/has sent ack itself
       if (res == R_COMM_OK &&
           (rx->flags & COMM_STAT_REPLY_BIT) &&
@@ -279,7 +290,7 @@ static int comm_tra_handle_rx(comm *comm, comm_arg* rx) {
           (rx->flags & COMM_STAT_REPLY_BIT) == 0 &&
           (rx->flags & COMM_FLAG_REQACK_BIT)) {
         // send empty ack directly from rx callback
-        comm_tra_tx_pending_acks(comm);
+        comm_tra_tx_pending_acks(co);
       }
 #endif
     }
@@ -290,7 +301,7 @@ static int comm_tra_handle_rx(comm *comm, comm_arg* rx) {
   return res;
 }
 
-int comm_tra_rx(comm *comm, comm_arg* rx) {
+int comm_tra_rx(comm *co, comm_arg* rx) {
   unsigned short tra_h = ((*rx->data)<<8) | (*(rx->data+1));
   rx->data += COMM_H_SIZE_TRA;
   rx->len -= COMM_H_SIZE_TRA;
@@ -298,10 +309,10 @@ int comm_tra_rx(comm *comm, comm_arg* rx) {
   unsigned short seqno = (tra_h & COMM_TRA_SEQNO_MASK) >> 4;
   rx->flags = flags;
   rx->seqno = seqno;
-  return comm_tra_handle_rx(comm, rx);
+  return comm_tra_handle_rx(co, rx);
 }
 
-static int comm_tra_tx_seqno(comm *comm, comm_arg* tx, unsigned short seqno) {
+static int comm_tra_tx_seqno(comm *co, comm_arg* tx, unsigned short seqno) {
   if (tx->flags & COMM_STAT_ALERT_BIT) {
     tx->seqno = 0;
   } else {
@@ -313,41 +324,44 @@ static int comm_tra_tx_seqno(comm *comm, comm_arg* tx, unsigned short seqno) {
     tx->data[1] = (tra_h & 0x00ff);
     if (tx->flags & COMM_FLAG_REQACK_BIT) {
       // this is to be acked, save for resend
-      int res = comm_tra_register_tx_tobeacked(comm, tx);
+      int res = comm_tra_register_tx_tobeacked(co, tx);
       if (res != R_COMM_OK) {
         return res;
       }
+#ifdef COMM_STATS
+      co->stat.tx++;
+#endif
     }
   }
-  return comm->tra.down_tx_f(comm, tx);
+  return co->tra.down_tx_f(co, tx);
 }
 
-int comm_tra_tx(comm *comm, comm_arg* tx) {
+int comm_tra_tx(comm *co, comm_arg* tx) {
   unsigned short seqno;
   if (COMM_USER_DIFFERENTIATION && tx->dst == COMM_NWK_BRDCAST && (tx->flags & COMM_FLAG_REQACK_BIT)) {
     return R_COMM_TRA_CANNOT_ACK_BROADCAST;
   }
   if (tx->flags & COMM_STAT_ALERT_BIT) {
-    return comm_tra_tx_seqno(comm, tx, 0);
+    return comm_tra_tx_seqno(co, tx, 0);
   }
   if ((tx->flags & COMM_STAT_REPLY_BIT) == 0) {
     // plain send, take nbr from sequence index for this dst and increase
-    unsigned char u = COMM_USER_DIFFERENTIATION ? COMM_TRA_USER_TO_INDEX(comm, tx->dst) : 0;
-    seqno = (comm->tra.seqno[u]++) & (COMM_TRA_SEQNO_MASK >> 4);
+    unsigned char u = COMM_USER_DIFFERENTIATION ? COMM_TRA_USER_TO_INDEX(co, tx->dst) : 0;
+    seqno = (co->tra.seqno[u]++) & (COMM_TRA_SEQNO_MASK >> 4);
   } else {
     // this is a reply, use same seqno as rx
     seqno = tx->seqno;
   }
-  return comm_tra_tx_seqno(comm, tx, seqno);
+  return comm_tra_tx_seqno(co, tx, seqno);
 }
 
-void comm_tra_init(comm *comm, comm_rx_fn up_rx_f, comm_tx_fn down_tx_f) {
+void comm_tra_init(comm *co, comm_rx_fn up_rx_f, comm_tx_fn down_tx_f) {
   int i,j;
   for (i = 0; i < COMM_TRA_MAX_USERS; i++) {
     for (j = 0; j < COMM_MAX_PENDING; j++) {
-      comm->tra.acks_rx_pend[i][j] = COMM_TRA_FREE_ACK_SLOT;
+      co->tra.acks_rx_pend[i][j] = COMM_TRA_FREE_ACK_SLOT;
     }
   }
-  comm->tra.up_rx_f = up_rx_f;
-  comm->tra.down_tx_f = down_tx_f;
+  co->tra.up_rx_f = up_rx_f;
+  co->tra.down_tx_f = down_tx_f;
 }
