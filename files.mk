@@ -1,7 +1,11 @@
-comm = ../generic/comm/src
+ifndef comm
+$(warn defaulting path to generic comm module, comm variable not set)
+comm = ../generic/comm
+endif
+
 FLAGS	+= -DCONFIG_BUILD_COMM
-INC	+= -I${comm}
-CPATH	+= ${comm}
+INC	+= -I${comm}/src
+CPATH	+= ${comm}/src
 CFILES	+= comm.c
 CFILES	+= comm_phy.c
 CFILES	+= comm_lnk.c
