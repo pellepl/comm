@@ -26,7 +26,7 @@ static unsigned short _crc_ccitt_16(unsigned short crc, unsigned char data) {
 }
 
 static int comm_link_packet_ready(comm *co) {
-  co->lnk.rx_arg->data = &co->lnk.buf[1];
+  co->lnk.rx_arg->data = co->lnk.buf;
   co->lnk.rx_arg->len = co->lnk.len;
   comm_arg * rx_arg = co->lnk.rx_arg;
 #if COMM_LNK_DOUBLE_RX_BUFFER
