@@ -50,10 +50,11 @@ static void comm_tra_tx_resend(comm *co, comm_time time) {
         // resend
         pending->resends++;
         pending->timestamp = time - COMM_RESEND_TICK_RANDOM;
-        COMM_TRA_DBG("resending %03x try %i", pending->arg.seqno, pending->resends);
+        COMM_TRA_DBG("resending %03x try %i slot %i", pending->arg.seqno, pending->resends, i);
 
         unsigned short t_len = pending->arg.len;
         unsigned char *t_data = pending->arg.data;
+
         int res = co->tra.down_tx_f(co, &pending->arg);
         // reset length and data ptr
         pending->arg.len = t_len;
@@ -149,6 +150,8 @@ static int comm_tra_register_tx_tobeacked(comm *co, comm_arg* tx) {
       break;
     }
   }
+
+  COMM_TRA_DBG("tx reg resend %03x, slot %i", tx->seqno, i);
 
   struct comm_tra_pkt *pending = &co->tra.acks_tx_pend[i];
 
