@@ -36,7 +36,9 @@
 
 /* protocol defines */
 
+#ifndef COMM_LNK_MAX_DATA
 #define COMM_LNK_MAX_DATA       256
+#endif
 #define COMM_APP_MAX_DATA       (COMM_LNK_MAX_DATA-1-2)
 
 #define COMM_NWK_BRDCAST        ((comm_addr)0x0)
