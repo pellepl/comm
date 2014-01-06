@@ -178,6 +178,9 @@ static int comm_tra_got_rx_ack(comm *co, comm_arg *rx) {
           (pending->arg.dst == rx->src || !COMM_USER_DIFFERENTIATION)) {
         pending->busy = 0;
         co->tra.acks_tx_pend_count--;
+#ifdef COMM_STATS
+        co->stat.tx++;
+#endif
         return R_COMM_OK;
       }
     }
@@ -331,9 +334,6 @@ static int comm_tra_tx_seqno(comm *co, comm_arg* tx, unsigned short seqno) {
       if (res != R_COMM_OK) {
         return res;
       }
-#ifdef COMM_STATS
-      co->stat.tx++;
-#endif
     }
   }
   return co->tra.down_tx_f(co, tx);

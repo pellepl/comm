@@ -55,17 +55,18 @@
 #define COMM_TRA_INF_CONGESTION  0x02
 #define COMM_TRA_INF_PONG        0x81
 
-// bits set by txer/rxer
+// bits set by txer/rxer, transmitted
 #define COMM_FLAG_REQACK_BIT     (1<<0)  /* indicates that ack is requested */
 #define COMM_FLAG_ISACK_BIT      (1<<1)  /* indicates that this is an ack */
 #define COMM_FLAG_INF_BIT        (1<<2)  /* indicates an info packet */
 #define COMM_FLAG_RESENT_BIT     (1<<3)  /* indicates a resent packet */
+// following bits are not transmitted
 // status flags set in transport layer
 #define COMM_STAT_RESEND_BIT     (1<<4)  /* indicates a packet whose ack is already registered - ie packet is resent */
 #define COMM_STAT_ACK_MISS_BIT   (1<<5)  /* indicates an ack for an already acked packet or a packet not wanting ack */
 // status flags set in app layer
 #define COMM_STAT_REPLY_BIT      (1<<6)  /* indicates that this message will be acked on app level */
-#define COMM_STAT_ALERT_BIT      (1<<7)  /* indicates that this in an alert packet */
+#define COMM_STAT_ALERT_BIT      (1<<7)  /* indicates that this is an alert packet */
 
 /* header sizes */
 
