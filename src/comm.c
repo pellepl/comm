@@ -92,7 +92,7 @@ unsigned char comm_squal(comm *co) {
   if (co->stat.tx > 0) {
     tx_fail_ratio = (255*co->stat.tx_fail) / (co->stat.tx * COMM_MAX_RESENDS);
   } else {
-    tx_fail_ratio = 128 + co->stat.tx_fail;
+    tx_fail_ratio = 255;
   }
   if (tx_fail_ratio > 255) tx_fail_ratio = 255;
   return (unsigned char)(255 - tx_fail_ratio);
