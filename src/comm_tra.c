@@ -139,11 +139,7 @@ void comm_tra_tick(comm *co, comm_time time) {
   comm_tra_tx_resend(co, time);
 }
 
-static int comm_tra_register_tx_tobeacked(comm *co, comm_arg* tx) {
-  if (co->tra.acks_tx_pend_count >= COMM_MAX_PENDING) {
-    return R_COMM_TRA_PEND_Q_FULL;
-  }
-
+static void comm_tra_register_tx_tobeacked(comm *co, comm_arg* tx) {
   int i;
   for (i = 0; i < COMM_MAX_PENDING; i++) {
     if (!co->tra.acks_tx_pend[i].busy) {
@@ -165,8 +161,6 @@ static int comm_tra_register_tx_tobeacked(comm *co, comm_arg* tx) {
   unsigned short xtra_h = COMM_FLAG_RESENT_BIT;
   pending->arg.data[0] |= (xtra_h & 0xff00) >> 8;
   pending->arg.data[1] |= (xtra_h & 0x00ff);
-
-  return R_COMM_OK;
 }
 
 static int comm_tra_got_rx_ack(comm *co, comm_arg *rx) {
@@ -319,8 +313,10 @@ int comm_tra_rx(comm *co, comm_arg* rx) {
 }
 
 static int comm_tra_tx_seqno(comm *co, comm_arg* tx, unsigned short seqno) {
+  int res;
   if (tx->flags & COMM_STAT_ALERT_BIT) {
     tx->seqno = 0;
+    res = co->tra.down_tx_f(co, tx);
   } else {
     tx->seqno = seqno;
     unsigned short tra_h = (seqno << 4) | ((tx->flags) &  ~(COMM_TRA_SEQNO_MASK));
@@ -328,15 +324,23 @@ static int comm_tra_tx_seqno(comm *co, comm_arg* tx, unsigned short seqno) {
     tx->len += COMM_H_SIZE_TRA;
     tx->data[0] = (tra_h & 0xff00) >> 8;
     tx->data[1] = (tra_h & 0x00ff);
+
     if (tx->flags & COMM_FLAG_REQACK_BIT) {
       // this is to be acked, save for resend
-      int res = comm_tra_register_tx_tobeacked(co, tx);
-      if (res != R_COMM_OK) {
-        return res;
+      if (co->tra.acks_tx_pend_count >= COMM_MAX_PENDING) {
+        return R_COMM_TRA_PEND_Q_FULL;
       }
+      res = co->tra.down_tx_f(co, tx);
+      if (res >= R_COMM_OK) {
+        // only register if sending succeeded
+        comm_tra_register_tx_tobeacked(co, tx);
+      }
+    } else {
+      res = co->tra.down_tx_f(co, tx);
     }
   }
-  return co->tra.down_tx_f(co, tx);
+
+  return res;
 }
 
 int comm_tra_tx(comm *co, comm_arg* tx) {
