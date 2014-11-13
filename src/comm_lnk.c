@@ -177,7 +177,7 @@ int comm_link_tx(comm *co, comm_arg* tx) {
 void comm_lnk_phy_err(comm *co, int err) {
   // reset state on timeout
   if (err == R_COMM_PHY_TMO && co->lnk.state != COMM_LNK_STATE_PRE) {
-    co->lnk.state = COMM_LNK_STATE_PRE;
+    co->lnk.state = co->conf & COMM_CONF_SKIP_PREAMPLE ? COMM_LNK_STATE_LEN : COMM_LNK_STATE_PRE;
   }
 }
 
